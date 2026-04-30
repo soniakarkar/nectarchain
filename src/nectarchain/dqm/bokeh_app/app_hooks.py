@@ -275,6 +275,118 @@ def update_timelines(data, timelines, runid=None):
     return tab_timelines
 
 
+def make_runconfig(source, runid=None):
+    """Make run configuration plots for the provided run data
+
+    Parameters
+    ----------
+    source : dict
+        Dictionary returned by `get_rundata`
+    runid : str
+        Identifier for dictionary extracted from the database,
+        containing the NectarCAM run number. Example: 'NectarCAM_Run6310'.
+        By default None
+
+    Returns
+    -------
+    dict
+        Nested dictionary containing line plots for the run configuration
+    """
+
+    with open(labels_path, "r", encoding="utf-8") as file:
+        y_axis_labels = json.load(file)["y_axis_labels_timelines"]
+
+    runconfigs = collections.defaultdict(dict)
+    for parentkey in source.keys():
+        # Prepare run configuration line plots only for pixel quantities evolving with time
+        if re.match("(?:.*PIXTIMELINE-.*)", parentkey):
+            for childkey in source[parentkey].keys():
+                logger.info(
+                    f"Run id {runid}, preparing plot for {parentkey}, {childkey}"
+                )
+                runconfigs[parentkey][childkey] = figure(title=childkey)
+                evts = np.arange(len(source[parentkey][childkey]))
+                runconfigs[parentkey][childkey] = figure(
+                    title=childkey,
+                    x_range=(0, np.max(evts) + 50),
+                    y_range=(0, 1),
+                    # A fraction is plotted:
+                    # y-range values are between 0 and 1 because
+                )
+                runconfigs[parentkey][childkey].line(
+                    x=evts,
+                    y=source[parentkey][childkey],
+                    line_width=3,
+                )
+    for parentkey in runconfigs.keys():
+        for childkey in runconfigs[parentkey].keys():
+            runconfigs[parentkey][childkey].xaxis.axis_label = "Event number"
+            try:
+                runconfigs[parentkey][childkey].yaxis.axis_label = y_axis_labels[
+                    parentkey
+                ]
+            except ValueError:
+                runconfigs[parentkey][childkey].yaxis.axis_label = ""
+            except KeyError:
+                runconfigs[parentkey][childkey].yaxis.axis_label = ""
+
+            runconfigs[parentkey][childkey].xaxis.axis_label_text_font_size = "12pt"
+            runconfigs[parentkey][childkey].yaxis.axis_label_text_font_size = "12pt"
+            runconfigs[parentkey][childkey].xaxis.major_label_text_font_size = "10pt"
+            runconfigs[parentkey][childkey].yaxis.major_label_text_font_size = "10pt"
+            runconfigs[parentkey][childkey].xaxis.axis_label_text_font_style = "normal"
+            runconfigs[parentkey][childkey].yaxis.axis_label_text_font_style = "normal"
+
+    logger.info(f"Successfully created run configuration plots for run {runid}")
+
+    return dict(runconfigs)
+
+
+def update_runconfig(data, run_config, runid=None):
+    """Reset each run configuration plot previously created by `make_runconfig`
+
+    Parameters
+    ----------
+    data : dict
+        Dictionary returned by `get_rundata`
+    run_config : dict
+        Nested dictionary containing run configuration plots created by `make_runconfig`
+    runid : str
+        Identifier for dictionary extracted from the database,
+        containing the NectarCAM run number. Example: 'NectarCAM_Run6310'.
+        By default None
+
+    Returns
+    -------
+    bokeh.models.TabPanel
+        Updated TabPanel containing the bokeh layout for the run configuration plots
+    """
+
+    # Reset run configuration plots
+    for k in run_config.keys():
+        for kk in run_config[k].keys():
+            run_config[k][kk].line(x=0, y=0)
+
+    # Make new run configuration plots
+    run_config = make_runconfig(data, runid)
+
+    list_run_config = [
+        run_config[parentkey][childkey]
+        for parentkey in run_config.keys()
+        for childkey in run_config[parentkey].keys()
+    ]
+
+    layout_runconfig = gridplot(
+        list_run_config,
+        ncols=2,
+    )
+
+    # Recreate TabPanel layout
+    tab_run_config = TabPanel(child=layout_runconfig, title="Run configuration")
+
+    return tab_run_config
+
+
 def make_camera_displays(source, runid):
     """Make camera display plots using `make_camera_display`,
        `make_pixel_val_vs_id` and `make_pixel_vals_histo`

@@ -5,8 +5,10 @@ from app_hooks import (
     get_rundata,
     make_camera_displays,
     make_timelines,
+    make_runconfig,
     update_camera_displays,
     update_timelines,
+    update_runconfig
 )
 
 # bokeh imports
@@ -68,6 +70,7 @@ def get_layout_per_camera(source, runids, camera_code):
 
         tab_camera_displays = update_camera_displays(source, displays, runid)
         tab_timelines = update_timelines(source, timelines, runid)
+        tab_run_config = update_run_config(source, runid)
         run_start_time_dt, first_event_time_dt, last_event_time_dt = get_run_times(
             source
         )
@@ -121,7 +124,7 @@ def get_layout_per_camera(source, runids, camera_code):
     source = get_rundata(db, run_select.value)
     displays = make_camera_displays(source, runid)
     timelines = make_timelines(source, runid)
-
+    run_config = make_runconfig(source, runid)
     run_start_time_dt, first_event_time_dt, last_event_time_dt = get_run_times(source)
     run_times_string = Div(
         text=f"""
@@ -179,10 +182,11 @@ def get_layout_per_camera(source, runids, camera_code):
         child=layout_camera_displays, title="Camera displays"
     )
     tab_timelines = TabPanel(child=layout_timelines, title="Timelines")
+    tab_run_config = TabPanel(child=layout_runconfig, title="Run configuration")
 
     # Combine panels into tabs
     tabs = Tabs(
-        tabs=[tab_camera_displays, tab_timelines],
+        tabs=[tab_camera_displays, tab_timelines, tab_run_config]
     )
 
     # TODO: may want to add a list to the logging of all created tabs,
