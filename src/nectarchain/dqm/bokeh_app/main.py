@@ -70,7 +70,7 @@ def get_layout_per_camera(source, runids, camera_code):
 
         tab_camera_displays = update_camera_displays(source, displays, runid)
         tab_timelines = update_timelines(source, timelines, runid)
-        tab_run_config = update_run_config(source, runid)
+        tab_runconfig = update_runconfig(source, runid)
         run_start_time_dt, first_event_time_dt, last_event_time_dt = get_run_times(
             source
         )
@@ -124,7 +124,7 @@ def get_layout_per_camera(source, runids, camera_code):
     source = get_rundata(db, run_select.value)
     displays = make_camera_displays(source, runid)
     timelines = make_timelines(source, runid)
-    run_config = make_runconfig(source, runid)
+    runconfig = make_runconfig(source, runid)
     run_start_time_dt, first_event_time_dt, last_event_time_dt = get_run_times(source)
     run_times_string = Div(
         text=f"""
@@ -166,7 +166,11 @@ def get_layout_per_camera(source, runids, camera_code):
         for parentkey in timelines.keys()
         for childkey in timelines[parentkey].keys()
     ]
-
+    list_runconfig = [
+        runconfig[parentkey][childkey]
+        for parentkey in runconfig.keys()
+        for childkey in runconfig[parentkey].keys()
+    ]
     layout_camera_displays = column(
         camera_displays,
         sizing_mode="scale_width",
@@ -176,17 +180,21 @@ def get_layout_per_camera(source, runids, camera_code):
         list_timelines,
         sizing_mode="scale_width",
     )
+    layout_runconfig = column(
+        list_runconfig,
+        sizing_mode="scale_width",
+    )
 
     # Create different tabs
     tab_camera_displays = TabPanel(
         child=layout_camera_displays, title="Camera displays"
     )
     tab_timelines = TabPanel(child=layout_timelines, title="Timelines")
-    tab_run_config = TabPanel(child=layout_runconfig, title="Run configuration")
+    tab_runconfig = TabPanel(child=layout_runconfig, title="Run configuration")
 
     # Combine panels into tabs
     tabs = Tabs(
-        tabs=[tab_camera_displays, tab_timelines, tab_run_config]
+        tabs=[tab_camera_displays, tab_timelines, tab_runconfig]
     )
 
     # TODO: may want to add a list to the logging of all created tabs,

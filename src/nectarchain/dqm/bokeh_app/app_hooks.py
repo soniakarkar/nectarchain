@@ -342,14 +342,14 @@ def make_runconfig(source, runid=None):
     return dict(runconfigs)
 
 
-def update_runconfig(data, run_config, runid=None):
+def update_runconfig(data, runconfig, runid=None):
     """Reset each run configuration plot previously created by `make_runconfig`
 
     Parameters
     ----------
     data : dict
         Dictionary returned by `get_rundata`
-    run_config : dict
+    runconfig : dict
         Nested dictionary containing run configuration plots created by `make_runconfig`
     runid : str
         Identifier for dictionary extracted from the database,
@@ -363,28 +363,28 @@ def update_runconfig(data, run_config, runid=None):
     """
 
     # Reset run configuration plots
-    for k in run_config.keys():
-        for kk in run_config[k].keys():
-            run_config[k][kk].line(x=0, y=0)
+    for k in runconfig.keys():
+        for kk in runconfig[k].keys():
+            runconfig[k][kk].line(x=0, y=0)
 
     # Make new run configuration plots
-    run_config = make_runconfig(data, runid)
+    runconfig = make_runconfig(data, runid)
 
-    list_run_config = [
-        run_config[parentkey][childkey]
-        for parentkey in run_config.keys()
-        for childkey in run_config[parentkey].keys()
+    list_runconfig = [
+        runconfig[parentkey][childkey]
+        for parentkey in runconfig.keys()
+        for childkey in runconfig[parentkey].keys()
     ]
 
-    layout_runconfig = gridplot(
-        list_run_config,
-        ncols=2,
+    layout_runconfig = column(
+        list_runconfig,
+         sizing_mode="scale_width",
     )
 
     # Recreate TabPanel layout
-    tab_run_config = TabPanel(child=layout_runconfig, title="Run configuration")
+    tab_runconfig = TabPanel(child=layout_runconfig, title="Run configuration")
 
-    return tab_run_config
+    return tab_runconfig
 
 
 def make_camera_displays(source, runid):
