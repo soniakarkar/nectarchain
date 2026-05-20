@@ -108,7 +108,7 @@ def _make_control(name: str, meta: dict):
         # Avoid degenerate slider (min == max)
         if lo == hi:
             hi = lo + 1
-        step = (hi - lo) / 100 if (hi - lo) > 100 else 1
+        step = (hi - lo) / 100 if (hi - lo) > 100 else 0.01
         return RangeSlider(
             title=name,
             start=lo, end=hi,
@@ -164,7 +164,7 @@ def _make_columns() -> list[TableColumn]:
         if ftype == "numeric":
             fmt = NumberFormatter(format="0,0.##")
         elif ftype == "date":
-            fmt = DateFormatter(format="%Y-%m-%d__%H:%M:%S:%f")
+            fmt = DateFormatter(format="%Y-%m-%d__%H:%M:%S")
         else:
             fmt = StringFormatter()
         cols.append(TableColumn(field=fname, title=fname, formatter=fmt))
@@ -197,13 +197,15 @@ def _build_query() -> dict:
 
         if ftype == "numeric":
             lo, hi = widget.value
-            query[fname] = {"$gte": lo, "$lte": hi}
+            if lo > widget.start or hi < widget.end:
+                query[fname] = {"$gte": lo, "$lte": hi}
 
         elif ftype == "date":
             lo_ms, hi_ms = widget.value   # milliseconds since epoch
-            lo_dt = datetime.fromtimestamp(lo_ms / 1000)
-            hi_dt = datetime.fromtimestamp(hi_ms / 1000)
-            query[fname] = {"$gte": lo_dt, "$lte": hi_dt}
+            if lo_ms > widget.start or hi_ms < widget.end:
+                lo_dt = datetime.fromtimestamp(lo_ms / 1000)
+                hi_dt = datetime.fromtimestamp(hi_ms / 1000)
+                query[fname] = {"$gte": lo_dt, "$lte": hi_dt}
 
         elif ftype == "bool":
             if widget.value == "True":
