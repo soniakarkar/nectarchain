@@ -275,107 +275,21 @@ def update_timelines(data, timelines, runid=None):
     return tab_timelines
 
 
-def make_runconfig(source, runid=None):
-    """Make run configuration plots for the provided run data
-
-    Parameters
-    ----------
-    source : dict
-        Dictionary returned by `get_rundata`
-    runid : str
-        Identifier for dictionary extracted from the database,
-        containing the NectarCAM run number. Example: 'NectarCAM_Run6310'.
-        By default None
-
-    Returns
-    -------
-    dict
-        Nested dictionary containing line plots for the run configuration
-    """
-
-    with open(labels_path, "r", encoding="utf-8") as file:
-        y_axis_labels = json.load(file)["y_axis_labels_timelines"]
-
-    runconfigs = collections.defaultdict(dict)
-    for parentkey in source.keys():
-        # Prepare run configuration line plots only for pixel quantities evolving with time
-        if re.match("(?:.*PIXTIMELINE-.*)", parentkey):
-            for childkey in source[parentkey].keys():
-                logger.info(
-                    f"Run id {runid}, preparing plot for {parentkey}, {childkey}"
-                )
-                runconfigs[parentkey][childkey] = figure(title=childkey)
-                evts = np.arange(len(source[parentkey][childkey]))
-                runconfigs[parentkey][childkey] = figure(
-                    title=childkey,
-                    x_range=(0, np.max(evts) + 50),
-                    y_range=(0, 1),
-                    # A fraction is plotted:
-                    # y-range values are between 0 and 1 because
-                )
-                runconfigs[parentkey][childkey].line(
-                    x=evts,
-                    y=source[parentkey][childkey],
-                    line_width=3,
-                )
-    for parentkey in runconfigs.keys():
-        for childkey in runconfigs[parentkey].keys():
-            runconfigs[parentkey][childkey].xaxis.axis_label = "Event number"
-            try:
-                runconfigs[parentkey][childkey].yaxis.axis_label = y_axis_labels[
-                    parentkey
-                ]
-            except ValueError:
-                runconfigs[parentkey][childkey].yaxis.axis_label = ""
-            except KeyError:
-                runconfigs[parentkey][childkey].yaxis.axis_label = ""
-
-            runconfigs[parentkey][childkey].xaxis.axis_label_text_font_size = "12pt"
-            runconfigs[parentkey][childkey].yaxis.axis_label_text_font_size = "12pt"
-            runconfigs[parentkey][childkey].xaxis.major_label_text_font_size = "10pt"
-            runconfigs[parentkey][childkey].yaxis.major_label_text_font_size = "10pt"
-            runconfigs[parentkey][childkey].xaxis.axis_label_text_font_style = "normal"
-            runconfigs[parentkey][childkey].yaxis.axis_label_text_font_style = "normal"
-
-    logger.info(f"Successfully created run configuration plots for run {runid}")
-
+def make_runconfig():
+    
     return dict(runconfigs)
 
 
 def update_runconfig(data, runconfig, runid=None):
-    """Reset each run configuration plot previously created by `make_runconfig`
 
-    Parameters
-    ----------
-    data : dict
-        Dictionary returned by `get_rundata`
-    runconfig : dict
-        Nested dictionary containing run configuration plots created by `make_runconfig`
-    runid : str
-        Identifier for dictionary extracted from the database,
-        containing the NectarCAM run number. Example: 'NectarCAM_Run6310'.
-        By default None
-
+"""
     Returns
     -------
     bokeh.models.TabPanel
         Updated TabPanel containing the bokeh layout for the run configuration plots
     """
 
-    # Reset run configuration plots
-    for k in runconfig.keys():
-        for kk in runconfig[k].keys():
-            runconfig[k][kk].line(x=0, y=0)
-
-    # Make new run configuration plots
-    runconfig = make_runconfig(data, runid)
-
-    list_runconfig = [
-        runconfig[parentkey][childkey]
-        for parentkey in runconfig.keys()
-        for childkey in runconfig[parentkey].keys()
-    ]
-
+    
     layout_runconfig = column(
         list_runconfig,
          sizing_mode="scale_width",

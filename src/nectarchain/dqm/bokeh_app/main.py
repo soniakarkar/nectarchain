@@ -70,7 +70,7 @@ def get_layout_per_camera(source, runids, camera_code):
 
         tab_camera_displays = update_camera_displays(source, displays, runid)
         tab_timelines = update_timelines(source, timelines, runid)
-        tab_runconfig = update_runconfig(source, runid)
+        tab_runconfig = update_runconfig()
         run_start_time_dt, first_event_time_dt, last_event_time_dt = get_run_times(
             source
         )
