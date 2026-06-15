@@ -31,7 +31,7 @@ from bokeh.models import (
     StringFormatter,
     TableColumn,
     TextInput,
-    Toggle,
+    Switch,
 )
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -105,15 +105,15 @@ class NumericRangeControl:
     Compound control for a high-cardinality numeric field.
  
     Layout (inside the sidebar column):
-        [Toggle: "Exact value ±10%"]   ← inactive by default
+        [Switch: "Exact value ±10%"]   ← inactive by default
         [TextInput: exact value    ]   ← disabled until toggle active
         ──────────────────────────
         [TextInput: min            ]   ← active by default
         [TextInput: max            ]
  
-    When the toggle is OFF  → range mode (min/max inputs); query also includes
+    When the switch is OFF  → range mode (min/max inputs); query also includes
                                docs where the field is missing/null.
-    When the toggle is ON   → exact mode (single value ±10%); only docs that
+    When the switch is ON   → exact mode (single value ±10%); only docs that
                                have the field and match the tolerance are returned.
     """
  
@@ -124,12 +124,12 @@ class NumericRangeControl:
         self.lo   = lo
         self.hi   = hi
  
-        # ── Toggle ──────────────────────────────────────────────────────────
-        self.toggle = Toggle(
+        # ── Switch ──────────────────────────────────────────────────────────
+        self.toggle = Switch(
             label=f"{name}: exact value ±10 %",
             active=False,
             sizing_mode="stretch_width",
-            button_type="default",
+
         )
  
         # ── Exact-value input (disabled until toggle is ON) ──────────────
@@ -154,12 +154,13 @@ class NumericRangeControl:
  
         # Wire internal toggle → enable/disable sub-widgets
         def _on_toggle(attr, old, new):
-            is_exact = bool(new)
-            self.exact_input.disabled = not is_exact
-            self.min_input.disabled   = is_exact
-            self.max_input.disabled   = is_exact
-            on_change_cb(attr, old, new)
- 
+            search_by_exact_value = bool(new)
+            self.exact_input.disabled = not search_by_exact_value
+            self.min_input.disabled   = search_by_exact_value
+            self.max_input.disabled   = search_by_exact_value
+            #on_change_cb(attr, old, new)
+        
+        # Wire all inputs → trigger update on change
         self.toggle.on_change("active", _on_toggle)
         self.exact_input.on_change("value", on_change_cb)
         self.min_input.on_change("value",   on_change_cb)
@@ -221,7 +222,7 @@ def _make_control(name: str, meta: dict):
     ftype  = meta["type"]
     values = meta["values"]
     if ftype == "numeric" and values:
-        distinct = list(dict.fromkeys(values))
+        distinct = list(set(values))
         if len(distinct) <= NUMERIC_SELECT_THRESHOLD:
             # ── Low-cardinality: Select ──────────────────────────────────
             # Format options: keep ints as ints, floats as floats
@@ -331,13 +332,10 @@ def _build_query(FIELD_META, controls: dict) -> dict:
             if val == "Any":
                 pass   # no filter
             elif val == "(missing)":
-                query[fname] = {"$in": [None]}
                 query[fname] = {"$or": [{"$exists": False}, {"$eq": None}]}
-                # Simpler single expression:
-                query[fname] = None   # matches null / missing
             else:
                 try:
-                    query[fname] = float(val)
+                    query[fname] = {"$eq": float(val)}
                 except ValueError:
                     pass
             continue
@@ -354,9 +352,9 @@ def _build_query(FIELD_META, controls: dict) -> dict:
         # ── Bool ─────────────────────────────────────────────────────────
         if ftype == "bool":
             if widget.value == "True":
-                query[fname] = True
+                query[fname] = {"$eq": True}
             elif widget.value == "False":
-                query[fname] = False
+                query[fname] = {"$eq": False}
             continue
  
         # ── String / TextInput ────────────────────────────────────────────
@@ -368,36 +366,43 @@ def _build_query(FIELD_META, controls: dict) -> dict:
 
 
 
-def update(attr, old, new, FIELD_META=None, controls=None, source=None, status_div=None, collection=None):
+def update(attr, old, new):
     query = _build_query(FIELD_META, controls)
     cursor = collection.find(query, {"_id": 0}).limit(MAX_DOCS)
     docs   = list(cursor)
-
-    if not docs:
-        source.data = {f: [] for f in FIELD_META}
-        status_div.text = "No documents match the current filters."
-        return
-
     df = pd.DataFrame(docs)
 
-    # Ensure all expected columns exist (some docs may lack optional fields)
-    for fname in FIELD_META:
-        if fname not in df.columns:
-            df[fname] = None
+     
+    if not docs:
+        # update div text to show no results, 
+        status_div.text = "No documents match the current filters."
+        # and clear the table (keep columns so user can adjust filters and see results)
+        source.data = {f: [] for f in FIELD_META}
+    else:
+        total = collection.count_documents(query)
+        shown = len(df)
+        if total > shown :
+            status_div.text = (
+                f"<b>{shown}</b> documents shown"
+                + (f" (of {total} matching — increase MAX_DOCS to see more)" )
+            )
+        else:
+            status_div.text = f"All <b>{total}</b> matching documents shown."
+    
 
-    # Convert datetime columns to ms-since-epoch so Bokeh DateFormatter works
-    for fname, fmeta in FIELD_META.items():
-        if fmeta["type"] == "date" and fname in df.columns:
-            df[fname] = pd.to_datetime(df[fname], errors="coerce")
 
-    total = collection.count_documents(query)
-    shown = len(df)
-    status_div.text = (
-        f"<b>{shown}</b> documents shown"
-        + (f" (of {total} matching — increase MAX_DOCS to see more)" if total > shown else "")
-    )
+        # Ensure all expected columns exist (some docs may lack optional fields)
+        for fname in FIELD_META:
+            if fname not in df.columns:
+                df[fname] = None
 
-    source.data = {fname: df[fname].tolist() for fname in FIELD_META if fname in df.columns}
+        # Convert datetime columns to ms-since-epoch so Bokeh DateFormatter works
+        for fname, fmeta in FIELD_META.items():
+            if fmeta["type"] == "date" and fname in df.columns:
+                df[fname] = pd.to_datetime(df[fname], errors="coerce")
+
+        # finally update the source with the new data
+        source.data = {fname: df[fname].tolist() for fname in FIELD_META if fname in df.columns}
 
 
 
@@ -415,8 +420,8 @@ def make_layout(FIELD_META):
             sidebar_children.append(widget)
     sidebar = column(
         *sidebar_children,
-        width=280,
-        sizing_mode="fixed",
+        # width=280,
+        sizing_mode="stretch_height",
         styles={"overflow-y": "auto", "max-height": "90vh", "padding-right": "8px"},
     )
     status_div = Div(
@@ -430,20 +435,20 @@ def make_layout(FIELD_META):
     data_table = DataTable(
         source=source,
         columns=table_cols,
-        sizing_mode="stretch_width",
-        height=600,
-        autosize_mode="force_fit",
+        sizing_mode="stretch_both",
+        # height=600,
+        # autosize_mode="force_fit",
     )
     main_area = column(
         status_div,
         data_table,
-        sizing_mode="stretch_width",
+        sizing_mode="stretch_both",
     )
 
     layout = column(
     header,
-    row(sidebar, main_area, sizing_mode="stretch_width"),
-    sizing_mode="stretch_width",
+    row(sidebar, main_area, sizing_mode="stretch_both"),
+    sizing_mode="stretch_both",
     )
     return layout, source, status_div
 
@@ -460,7 +465,7 @@ for widget in controls.values():
     if not isinstance(widget, NumericRangeControl):
         widget.on_change("value", update)
 layout, source, status_div = make_layout(FIELD_META)
-update(attr=None, old=None, new=None, FIELD_META=FIELD_META, controls=controls, source=source, status_div=status_div, collection=collection)   # initial data load
+update(None, None, None)   # initial data load
 
 curdoc().add_root(layout)
 curdoc().title = f"{MONGO_DB}.{MONGO_COLLECTION} explorer"
