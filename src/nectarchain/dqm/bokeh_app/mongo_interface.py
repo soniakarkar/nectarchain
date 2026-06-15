@@ -44,7 +44,8 @@ MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "runconfig")
 MAX_DOCS = 5000
 # Threshold: <= this many distinct values → Select, otherwise dual TextInput
 NUMERIC_SELECT_THRESHOLD = 15
-
+_debounce_handle = None
+DEBOUNCE_MS = 400  # wait 400 ms after last slider move before querying
 
 def get_collection():
     client     = MongoClient(MONGO_URI)
@@ -113,11 +114,11 @@ class NumericRangeControl:
  
     When the switch is OFF  → range mode (min/max inputs); query also includes
                                docs where the field is missing/null.
-    When the switch is ON   → exact mode (single value ±10%); only docs that
+    When the switch is ON   → exact mode (single value ±1%); only docs that
                                have the field and match the tolerance are returned.
     """
  
-    TOLERANCE = 0.10   # ±10 %
+    TOLERANCE = 0.010   # ±1 %
  
     def __init__(self, name: str, lo: float, hi: float, on_change_cb):
         self.name = name
@@ -126,7 +127,7 @@ class NumericRangeControl:
  
         # ── Switch ──────────────────────────────────────────────────────────
         self.toggle = Switch(
-            label=f"{name}: exact value ±10 %",
+            label=f"{name}: exact value ±1 %",
             active=False,
             sizing_mode="stretch_width",
 
@@ -176,7 +177,7 @@ class NumericRangeControl:
         should be applied.
         """
         if self.toggle.active:
-            # ── Exact ±10 % mode ─────────────────────────────────────────
+            # ── Exact ±x % mode ─────────────────────────────────────────
             raw = self.exact_input.value.strip()
             if not raw:
                 return None          # no value entered → no filter
@@ -316,14 +317,20 @@ def _build_query(FIELD_META, controls: dict) -> dict:
                 query.update(frag)
             else:
                 # Range mode: also include docs where the field is absent
-                field_filter = frag[fname]
-                query[fname] = {
-                    "$or": [
-                        field_filter,
-                        {"$exists": False},
-                        {"$eq": None},
+                field_filter = frag[fname]   # e.g. {"$gte": lo, "$lte": hi}
+                query["$or"] = query.get("$or", []) + [
+                    {fname: field_filter},
+                    {fname: {"$exists": False}},
+                    {fname: None},
                     ]
-                }
+                # field_filter = frag[fname]
+                # query[fname] = {
+                #     "$or": [
+                #         field_filter,
+                #         {"$exists": False},
+                #         {"$eq": None},
+                #     ]
+                # }
             continue
  
         # ── Low-cardinality numeric (Select) ─────────────────────────────
@@ -331,8 +338,13 @@ def _build_query(FIELD_META, controls: dict) -> dict:
             val = widget.value
             if val == "Any":
                 pass   # no filter
+            # elif val == "(missing)":
+            #     query[fname] = {"$or": [{"$exists": False}, {"$eq": None}]}
             elif val == "(missing)":
-                query[fname] = {"$or": [{"$exists": False}, {"$eq": None}]}
+                query["$or"] = query.get("$or", []) + [
+                    {fname: {"$exists": False}},
+                    {fname: None},
+                    ]
             else:
                 try:
                     query[fname] = {"$eq": float(val)}
@@ -367,6 +379,23 @@ def _build_query(FIELD_META, controls: dict) -> dict:
 
 
 def update(attr, old, new):
+    global _debounce_handle
+    if _debounce_handle is not None:
+        try:
+            curdoc().remove_timeout_callback(_debounce_handle)
+        except ValueError:
+            pass  # already fired, safe to ignore
+    _debounce_handle = curdoc().add_timeout_callback(_do_update, DEBOUNCE_MS)
+
+
+def _do_update():
+    global _debounce_handle
+    _debounce_handle = None
+
+    query  = _build_query(FIELD_META, controls)
+    cursor = collection.find(query, {"_id": 0}).limit(MAX_DOCS)
+    docs   = list(cursor)
+
     query = _build_query(FIELD_META, controls)
     cursor = collection.find(query, {"_id": 0}).limit(MAX_DOCS)
     docs   = list(cursor)
@@ -463,7 +492,9 @@ for fname, fmeta in FIELD_META.items():
 # ── Wire simple controls (NumericRangeControl wires itself in __init__) ───────
 for widget in controls.values():
     if not isinstance(widget, NumericRangeControl):
-        widget.on_change("value", update)
+        widget.on_change("value", update) 
+        # update will have the signature (attr, old, new) as required by Bokeh
+        # with attr being the widget value here. 
 layout, source, status_div = make_layout(FIELD_META)
 update(None, None, None)   # initial data load
 
