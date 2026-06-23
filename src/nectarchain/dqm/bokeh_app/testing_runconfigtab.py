@@ -5,5 +5,5 @@ from mongodb_explorer import MongoExplorer
 explorer1 = MongoExplorer("mongodb://192.168.30.104:27017", "test", "runconfig")
 explorer2 = MongoExplorer("mongodb://192.168.30.104:27017", "test", "runconfig")
 
-tabs = Tabs(tabs=[explorer1.panel, explorer2.panel])
+tabs = Tabs(tabs=[explorer1.panel, explorer2.panel], sizing_mode="stretch_both")
 curdoc().add_root(tabs)
