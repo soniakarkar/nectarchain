@@ -1,10 +1,10 @@
-# # mongo_explorer.py
-# """
-# TabPanel for a Bokeh server app — MongoDB explorer
-# ====================================
-# Auto-discovers fields in a MongoDB collection, builds appropriate filter
-# controls for each field type, and displays matching documents in a DataTable.
-# """
+# mongodb_explorer.py
+"""
+TabPanel for a Bokeh server app — MongoDB explorer
+====================================
+Auto-discovers fields in a MongoDB collection, builds appropriate filter
+controls for each field type, and displays matching documents in a DataTable.
+"""
 
 from pymongo import MongoClient
 import pandas as pd
@@ -22,7 +22,6 @@ from bokeh.models import (
     Switch,
     DatetimeRangeSlider,
     Div,
-    TabPanel,
 )
 from datetime import datetime, date
 # Threshold: <= this many distinct values → Select, otherwise dual TextInput
@@ -142,7 +141,7 @@ class NumericRangeControl:
             self.max_input.disabled   = search_by_exact_value
             #on_change_cb(attr, old, new)
         
-        # Wire all inputs → trigger update_runconfig_tab on change
+        # Wire switch input
         self.toggle.on_change("active", _on_toggle)
  
     # Convenience: return all Bokeh widgets for layout
@@ -216,7 +215,7 @@ def _make_control(name: str, meta: dict):
             )
         else:
             # ── High-cardinality: dual TextInput with toggle ─────────────
-            # (returned as NumericRangeControl; wired to update_runconfig_tab() below)
+            # (returned as NumericRangeControl
             lo = min(float(v) for v in distinct)
             hi = max(float(v) for v in distinct)
             return NumericRangeControl(name, lo, hi)
@@ -292,7 +291,7 @@ def _build_query(FIELD_META, controls: dict) -> dict:
                 continue
             if widget.toggle.active:
                 # Exact mode: strict match, no missing-field inclusion
-                query.update_runconfig_tab(frag)
+                query.update(frag)
             else:
                 # Range mode: also include docs where the field is absent
                 field_filter = frag[fname]   # e.g. {"$gte": lo, "$lte": hi}
@@ -301,14 +300,6 @@ def _build_query(FIELD_META, controls: dict) -> dict:
                     {fname: {"$exists": False}},
                     {fname: None},
                     ]
-                # field_filter = frag[fname]
-                # query[fname] = {
-                #     "$or": [
-                #         field_filter,
-                #         {"$exists": False},
-                #         {"$eq": None},
-                #     ]
-                # }
             continue
  
         # ── Low-cardinality numeric (Select) ─────────────────────────────
@@ -379,8 +370,6 @@ class MongoExplorer:
         # Wire controls
         for widget in self.controls.values():
             if isinstance(widget, NumericRangeControl):
-                # NumericRangeControl already wired itself in __init__,
-                # but it was wired to the module-level update() — rewire it
                 for w in [widget.exact_input, widget.min_input, widget.max_input]:
                     w.on_change("value", self._schedule_update)
             else:
