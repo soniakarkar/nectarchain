@@ -275,30 +275,6 @@ def update_timelines(data, timelines, runid=None):
     return tab_timelines
 
 
-def make_runconfig():
-    
-    return dict(runconfigs)
-
-
-def update_runconfig(data, runconfig, runid=None):
-    """
-        Returns
-        -------
-        bokeh.models.TabPanel
-            Updated TabPanel containing the bokeh layout for the run configuration plots
-    """
-
-    
-    layout_runconfig = column(
-        list_runconfig,
-         sizing_mode="scale_both",
-    )
-
-    # Recreate TabPanel layout
-    tab_runconfig = TabPanel(child=layout_runconfig, title="Run configuration")
-    return tab_runconfig
-
-
 def make_camera_displays(source, runid):
     """Make camera display plots using `make_camera_display`,
        `make_pixel_val_vs_id` and `make_pixel_vals_histo`
