@@ -161,7 +161,7 @@ class NumericRangeControl:
             self.max_input.disabled   = search_by_exact_value
             #on_change_cb(attr, old, new)
         
-        # Wire all inputs → trigger update on change
+        # Wire all inputs → trigger update_runconfig_tab on change
         self.toggle.on_change("active", _on_toggle)
         self.exact_input.on_change("value", on_change_cb)
         self.min_input.on_change("value",   on_change_cb)
@@ -238,10 +238,10 @@ def _make_control(name: str, meta: dict):
             )
         else:
             # ── High-cardinality: dual TextInput with toggle ─────────────
-            # (returned as NumericRangeControl; wired to update() below)
+            # (returned as NumericRangeControl; wired to update_runconfig_tab() below)
             lo = min(float(v) for v in distinct)
             hi = max(float(v) for v in distinct)
-            return NumericRangeControl(name, lo, hi, on_change_cb=update)
+            return NumericRangeControl(name, lo, hi, on_change_cb=update_runconfig_tab)
 
 
     if ftype == "date" and values:
@@ -314,7 +314,7 @@ def _build_query(FIELD_META, controls: dict) -> dict:
                 continue
             if widget.toggle.active:
                 # Exact mode: strict match, no missing-field inclusion
-                query.update(frag)
+                query.update_runconfig_tab(frag)
             else:
                 # Range mode: also include docs where the field is absent
                 field_filter = frag[fname]   # e.g. {"$gte": lo, "$lte": hi}
@@ -378,7 +378,7 @@ def _build_query(FIELD_META, controls: dict) -> dict:
 
 
 
-def update(attr, old, new):
+def update_runconfig_tab(attr, old, new):
     global _debounce_handle
     if _debounce_handle is not None:
         try:
@@ -492,11 +492,11 @@ for fname, fmeta in FIELD_META.items():
 # ── Wire simple controls (NumericRangeControl wires itself in __init__) ───────
 for widget in controls.values():
     if not isinstance(widget, NumericRangeControl):
-        widget.on_change("value", update) 
-        # update will have the signature (attr, old, new) as required by Bokeh
+        widget.on_change("value", update_runconfig_tab) 
+        # update_runconfig_tab will have the signature (attr, old, new) as required by Bokeh
         # with attr being the widget value here. 
 layout, source, status_div = make_layout(FIELD_META)
-update(None, None, None)   # initial data load
+update_runconfig_tab(None, None, None)   # initial data load
 
 curdoc().add_root(layout)
 curdoc().title = f"{MONGO_DB}.{MONGO_COLLECTION} explorer"
