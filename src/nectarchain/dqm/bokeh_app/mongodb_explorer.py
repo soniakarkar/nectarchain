@@ -6,32 +6,36 @@ Auto-discovers fields in a MongoDB collection, builds appropriate filter
 controls for each field type, and displays matching documents in a DataTable.
 """
 
-from pymongo import MongoClient
+from datetime import date, datetime
+
 import pandas as pd
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
 from bokeh.models import (
     ColumnDataSource,
     DataTable,
-    TableColumn,
-    NumberFormatter,
     DateFormatter,
-    StringFormatter,
-    TextInput,
-    Select,
-    Switch,
     DatetimeRangeSlider,
     Div,
+    NumberFormatter,
+    Select,
+    StringFormatter,
+    Switch,
+    TableColumn,
+    TextInput,
 )
-from datetime import datetime, date
+from pymongo import MongoClient
+
 # Threshold: <= this many distinct values → Select, otherwise dual TextInput
 NUMERIC_SELECT_THRESHOLD = 15
 
+
 def get_collection(dburl, dbname, collname):
-    client     = MongoClient(dburl)
-    db         = client[dbname]
+    client = MongoClient(dburl)
+    db = client[dbname]
     collection = db[collname]
     return collection
+
 
 def _infer_fields(collection, sample_size: int = 5000) -> dict:
     """
@@ -40,7 +44,7 @@ def _infer_fields(collection, sample_size: int = 5000) -> dict:
     Skips the internal _id field.
     """
 
-    docs   = list(collection.find({}, {"_id": 0}).limit(sample_size))
+    docs = list(collection.find({}, {"_id": 0}).limit(sample_size))
     if not docs:
         return {}
 
@@ -78,41 +82,40 @@ def _infer_fields(collection, sample_size: int = 5000) -> dict:
     return fields
 
 
-
 # ── NumericControl helper ─────────────────────────────────────────────────────
- 
+
+
 class NumericRangeControl:
     """
     Compound control for a high-cardinality numeric field.
- 
+
     Layout (inside the sidebar column):
         [Switch: "Exact value ±10%"]   ← inactive by default
         [TextInput: exact value    ]   ← disabled until toggle active
         ──────────────────────────
         [TextInput: min            ]   ← active by default
         [TextInput: max            ]
- 
+
     When the switch is OFF  → range mode (min/max inputs); query also includes
                                docs where the field is missing/null.
     When the switch is ON   → exact mode (single value ±1%); only docs that
                                have the field and match the tolerance are returned.
     """
- 
-    TOLERANCE = 0.010   # ±1 %
- 
+
+    TOLERANCE = 0.010  # ±1 %
+
     def __init__(self, name: str, lo: float, hi: float):
         self.name = name
-        self.lo   = lo
-        self.hi   = hi
- 
+        self.lo = lo
+        self.hi = hi
+
         # ── Switch ──────────────────────────────────────────────────────────
         self.toggle = Switch(
             label=f"{name}: exact value ±1 %",
             active=False,
             sizing_mode="stretch_width",
-
         )
- 
+
         # ── Exact-value input (disabled until toggle is ON) ──────────────
         self.exact_input = TextInput(
             title="Exact value",
@@ -120,7 +123,7 @@ class NumericRangeControl:
             disabled=True,
             sizing_mode="stretch_width",
         )
- 
+
         # ── Range inputs (active by default) ────────────────────────────
         self.min_input = TextInput(
             title=f"{name}  —  min",
@@ -132,22 +135,22 @@ class NumericRangeControl:
             value=str(hi),
             sizing_mode="stretch_width",
         )
- 
+
         # Wire internal toggle → enable/disable sub-widgets
         def _on_toggle(attr, old, new):
             search_by_exact_value = bool(new)
             self.exact_input.disabled = not search_by_exact_value
-            self.min_input.disabled   = search_by_exact_value
-            self.max_input.disabled   = search_by_exact_value
-            #on_change_cb(attr, old, new)
-        
+            self.min_input.disabled = search_by_exact_value
+            self.max_input.disabled = search_by_exact_value
+            # on_change_cb(attr, old, new)
+
         # Wire switch input
         self.toggle.on_change("active", _on_toggle)
- 
+
     # Convenience: return all Bokeh widgets for layout
     def widgets(self):
         return [self.toggle, self.exact_input, self.min_input, self.max_input]
- 
+
     def mongo_filter(self) -> dict | None:
         """
         Return a MongoDB filter fragment for this field, or None if no filter
@@ -157,14 +160,14 @@ class NumericRangeControl:
             # ── Exact ±x % mode ─────────────────────────────────────────
             raw = self.exact_input.value.strip()
             if not raw:
-                return None          # no value entered → no filter
+                return None  # no value entered → no filter
             try:
                 val = float(raw)
             except ValueError:
                 return None
-            tol   = abs(val) * self.TOLERANCE
-            lo    = val - tol
-            hi    = val + tol
+            tol = abs(val) * self.TOLERANCE
+            lo = val - tol
+            hi = val + tol
             return {self.name: {"$gte": lo, "$lte": hi}}
         else:
             # ── Range mode (include missing/null docs) ───────────────────
@@ -176,28 +179,21 @@ class NumericRangeControl:
                 hi = float(self.max_input.value.strip())
             except ValueError:
                 hi = self.hi
- 
+
             # If the range covers the full sample extent → no filter needed
             # (keeps missing-field docs naturally included)
             if lo <= self.lo and hi >= self.hi:
                 return None
- 
+
             # Keep docs that satisfy the range OR that have the field missing
             return {self.name: {"$gte": lo, "$lte": hi}}
             # Note: "also return docs with field missing" is applied in
             # _build_query by wrapping with $or: [{filter}, {field: {$exists: false}}]
- 
-
-
-
-
-
-
 
 
 def _make_control(name: str, meta: dict):
     """Return the most appropriate Bokeh widget for the field."""
-    ftype  = meta["type"]
+    ftype = meta["type"]
     values = meta["values"]
     if ftype == "numeric" and values:
         distinct = list(set(values))
@@ -205,7 +201,10 @@ def _make_control(name: str, meta: dict):
             # ── Low-cardinality: Select ──────────────────────────────────
             # Format options: keep ints as ints, floats as floats
             def _fmt(v):
-                return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+                return (
+                    str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+                )
+
             options = ["Any", "(missing)"] + [_fmt(v) for v in distinct]
             return Select(
                 title=name,
@@ -220,7 +219,6 @@ def _make_control(name: str, meta: dict):
             hi = max(float(v) for v in distinct)
             return NumericRangeControl(name, lo, hi)
 
-
     if ftype == "date" and values:
         dates = []
         for v in values:
@@ -233,10 +231,12 @@ def _make_control(name: str, meta: dict):
             hi = max(dates)
             if lo == hi:
                 from datetime import timedelta
+
                 hi = lo + timedelta(days=1)
             return DatetimeRangeSlider(
                 title=name,
-                start=lo, end=hi,
+                start=lo,
+                end=hi,
                 value=(lo, hi),
                 sizing_mode="stretch_width",
             )
@@ -257,8 +257,6 @@ def _make_control(name: str, meta: dict):
     )
 
 
-
-
 def _make_columns(FIELD_META) -> list[TableColumn]:
     cols = []
     for fname, fmeta in FIELD_META.items():
@@ -273,8 +271,8 @@ def _make_columns(FIELD_META) -> list[TableColumn]:
     return cols
 
 
-
 # ── Query builder ─────────────────────────────────────────────────────────────
+
 
 def _build_query(FIELD_META, controls: dict) -> dict:
     """Translate current widget values into a MongoDB filter dict."""
@@ -294,42 +292,42 @@ def _build_query(FIELD_META, controls: dict) -> dict:
                 query.update(frag)
             else:
                 # Range mode: also include docs where the field is absent
-                field_filter = frag[fname]   # e.g. {"$gte": lo, "$lte": hi}
+                field_filter = frag[fname]  # e.g. {"$gte": lo, "$lte": hi}
                 query["$or"] = query.get("$or", []) + [
                     {fname: field_filter},
                     {fname: {"$exists": False}},
                     {fname: None},
-                    ]
+                ]
             continue
- 
+
         # ── Low-cardinality numeric (Select) ─────────────────────────────
         if ftype == "numeric":
             val = widget.value
             if val == "Any":
-                pass   # no filter
+                pass  # no filter
             # elif val == "(missing)":
             #     query[fname] = {"$or": [{"$exists": False}, {"$eq": None}]}
             elif val == "(missing)":
                 query["$or"] = query.get("$or", []) + [
                     {fname: {"$exists": False}},
                     {fname: None},
-                    ]
+                ]
             else:
                 try:
                     query[fname] = {"$eq": float(val)}
                 except ValueError:
                     pass
             continue
- 
+
         # ── Date ─────────────────────────────────────────────────────────
         if ftype == "date":
-            lo_ms, hi_ms = widget.value   # milliseconds since epoch
+            lo_ms, hi_ms = widget.value  # milliseconds since epoch
             if lo_ms > widget.start or hi_ms < widget.end:
                 lo_dt = datetime.utcfromtimestamp(lo_ms / 1000)
                 hi_dt = datetime.utcfromtimestamp(hi_ms / 1000)
                 query[fname] = {"$gte": lo_dt, "$lte": hi_dt}
             continue
- 
+
         # ── Bool ─────────────────────────────────────────────────────────
         if ftype == "bool":
             if widget.value == "True":
@@ -337,32 +335,28 @@ def _build_query(FIELD_META, controls: dict) -> dict:
             elif widget.value == "False":
                 query[fname] = {"$eq": False}
             continue
- 
+
         # ── String / TextInput ────────────────────────────────────────────
         txt = widget.value.strip()
         if txt:
             query[fname] = {"$regex": txt, "$options": "i"}
- 
+
     return query
-
-
-
-
 
 
 class MongoExplorer:
     DEBOUNCE_MS = 400
 
     def __init__(self, uri: str, db: str, collection: str, max_docs: int = 5000):
-        self._client     = MongoClient(uri)
-        self.collection  = self._client[db][collection]
-        self.db_name     = db
-        self.coll_name   = collection
-        self.max_docs    = max_docs
-        self._debounce   = None
+        self._client = MongoClient(uri)
+        self.collection = self._client[db][collection]
+        self.db_name = db
+        self.coll_name = collection
+        self.max_docs = max_docs
+        self._debounce = None
 
-        self.FIELD_META  = _infer_fields(self.collection)
-        self.controls    = {
+        self.FIELD_META = _infer_fields(self.collection)
+        self.controls = {
             fname: _make_control(fname, fmeta)
             for fname, fmeta in self.FIELD_META.items()
         }
@@ -384,14 +378,16 @@ class MongoExplorer:
                 curdoc().remove_timeout_callback(self._debounce)
             except ValueError:
                 pass
-        self._debounce = curdoc().add_timeout_callback(self._do_update, self.DEBOUNCE_MS)
+        self._debounce = curdoc().add_timeout_callback(
+            self._do_update, self.DEBOUNCE_MS
+        )
 
     def _do_update(self):
         self._debounce = None
-        query  = _build_query(self.FIELD_META, self.controls)
+        query = _build_query(self.FIELD_META, self.controls)
         cursor = self.collection.find(query, {"_id": 0}).limit(self.max_docs)
-        docs   = list(cursor)
-        df     = pd.DataFrame(docs)
+        docs = list(cursor)
+        df = pd.DataFrame(docs)
 
         if not docs:
             self.status_div.text = "No documents match the current filters."
@@ -422,8 +418,8 @@ class MongoExplorer:
 
     def _make_panel(self):
         header = Div(
-            text=f"<h2 style='margin:0'>MongoDB explorer — "
-                 f"<code>{self.db_name}.{self.coll_name}</code></h2>",
+            text=f"<h2 style='margin:0'>{self.db_name}.{self.coll_name} —   "
+            f"<code>DB explorer </code></h2>",
             sizing_mode="stretch_width",
         )
 
@@ -437,7 +433,7 @@ class MongoExplorer:
         sidebar = column(
             *sidebar_children,
             sizing_mode="stretch_height",
-            styles={"overflow-y": "auto", "max-height": "90vh", "padding-right": "8px"},
+            styles={"overflow-y": "auto", "max-width": "15%", "padding-right": "4px"},
         )
 
         status_div = Div(
@@ -446,7 +442,7 @@ class MongoExplorer:
             sizing_mode="stretch_width",
         )
 
-        source     = ColumnDataSource(data={f: [] for f in self.FIELD_META})
+        source = ColumnDataSource(data={f: [] for f in self.FIELD_META})
         table_cols = _make_columns(self.FIELD_META)
         data_table = DataTable(
             source=source,
@@ -465,5 +461,6 @@ class MongoExplorer:
         )
 
         from bokeh.models import TabPanel
+
         panel = TabPanel(child=layout, title=f"{self.db_name}.{self.coll_name}")
         return source, status_div, panel
