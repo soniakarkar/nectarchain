@@ -541,6 +541,29 @@ class TestInferFields:
         result = _infer_fields(collection)
         assert result["flag"]["type"] == "bool"
 
+    def test_detects_array_type_with_numeric_elements(self):
+        docs = [{"array_field": [1.0, 2.0, 3.0]}, {"array_field": [4.0, 5.0]}]
+        collection = _mock_collection(docs)
+        result = _infer_fields(collection)
+        assert result["array_field"]["type"] == "array"
+        assert result["array_field"]["element_type"] == "numeric"
+        assert result["array_field"]["values"] == [[1.0, 2.0, 3.0], [4.0, 5.0]]
+
+    def test_detects_array_type_with_integer_elements(self):
+        docs = [{"array_field": [1, 2, 3]}, {"array_field": [4, 5]}]
+        collection = _mock_collection(docs)
+        result = _infer_fields(collection)
+        assert result["array_field"]["type"] == "array"
+        assert result["array_field"]["element_type"] == "numeric"
+        assert result["array_field"]["values"] == [[1, 2, 3], [4, 5]]
+
+    def test_detects_array_type_with_empty_arrays(self):
+        docs = [{"array_field": []}, {"array_field": [1.0, 2.0]}]
+        collection = _mock_collection(docs)
+        result = _infer_fields(collection)
+        assert result["array_field"]["type"] == "array"
+        assert result["array_field"]["element_type"] == "numeric"
+
     def test_field_with_only_none_values_is_string(self):
         docs = [{"label": None}, {"label": None}]
         collection = _mock_collection(docs)
@@ -710,6 +733,104 @@ class TestMongoExplorerDoUpdate:
         assert "age" in data
         assert data["age"][0] == 30.0  # pandas may upcast int → float
         assert math.isnan(data["age"][1])
+
+    def test_array_fields_are_formatted_in_do_update(self):
+        docs = [
+            {"name": "run1", "array_field": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]},
+            {"name": "run2", "array_field": [10.0, 20.0]},
+        ]
+        explorer = _make_mongo_explorer(docs)
+        data = explorer.source.data
+        assert "array_field" in data
+        # 6 elements → first 5 + ",… (+1 more)" suffix
+        assert data["array_field"][0] == (
+            "1.00000e+00,2.00000e+00,3.00000e+00," "4.00000e+00,5.00000e+00,… (+1 more)"
+        )
+        # 2 elements → all shown, no suffix
+        assert data["array_field"][1] == "1.00000e+01,2.00000e+01"
+
+    def test_raw_arrays_retained_for_modal(self):
+        docs = [
+            {"name": "run1", "array_field": [1.0, 2.0, 3.0]},
+            {"name": "run2", "array_field": [4.0, 5.0, 6.0]},
+        ]
+        explorer = _make_mongo_explorer(docs)
+        assert "array_field" in explorer._raw_arrays
+        assert explorer._raw_arrays["array_field"][0] == [1.0, 2.0, 3.0]
+        assert explorer._raw_arrays["array_field"][1] == [4.0, 5.0, 6.0]
+
+    def test_array_field_missing_displays_none(self):
+        docs = [
+            {"name": "run1", "array_field": [1.0, 2.0]},
+            {"name": "run2"},  # missing 'array_field'
+        ]
+        explorer = _make_mongo_explorer(docs)
+        data = explorer.source.data
+        assert data["array_field"][0] == "1.00000e+00,2.00000e+00"
+        assert data["array_field"][1] == "None"
+
+    def test_int_array_keeps_integers_end_to_end(self):
+        """Integer array elements stay integers through _do_update."""
+        docs = [
+            {"name": "run1", "int_array": [1, 2, 3]},
+            {"name": "run2", "int_array": [100, 200]},
+        ]
+        explorer = _make_mongo_explorer(docs)
+        assert explorer.FIELD_META["int_array"]["type"] == "array"
+        assert explorer.FIELD_META["int_array"]["element_type"] == "numeric"
+        data = explorer.source.data
+        assert data["int_array"][0] == "1,2,3"
+        assert data["int_array"][1] == "100,200"
+        assert explorer._raw_arrays["int_array"][0] == [1, 2, 3]
+        assert explorer._raw_arrays["int_array"][1] == [100, 200]
+
+    def test_float_array_scientific_notation_end_to_end(self):
+        """Float array elements render as scientific notation (6 sig figs)."""
+        docs = [
+            {"name": "run1", "float_array": [1234.5, 0.0012345]},
+            {"name": "run2", "float_array": [99999.99]},
+        ]
+        explorer = _make_mongo_explorer(docs)
+        assert explorer.FIELD_META["float_array"]["element_type"] == "numeric"
+        data = explorer.source.data
+        assert data["float_array"][0] == "1.23450e+03,1.23450e-03"
+        assert data["float_array"][1] == "1.00000e+05"
+        assert explorer._raw_arrays["float_array"][0] == [1234.5, 0.0012345]
+
+    def test_bool_array_end_to_end(self):
+        """Bool array elements render as 'True'/'False' strings."""
+        docs = [
+            {"name": "run1", "bool_array": [True, False, True]},
+            {"name": "run2", "bool_array": [False]},
+        ]
+        explorer = _make_mongo_explorer(docs)
+        assert explorer.FIELD_META["bool_array"]["element_type"] == "bool"
+        data = explorer.source.data
+        assert data["bool_array"][0] == "True,False,True"
+        assert data["bool_array"][1] == "False"
+
+    def test_string_array_end_to_end(self):
+        """Non-numeric array elements render via str()."""
+        docs = [
+            {"name": "run1", "str_array": ["alpha", "beta", "gamma"]},
+            {"name": "run2", "str_array": ["delta"]},
+        ]
+        explorer = _make_mongo_explorer(docs)
+        assert explorer.FIELD_META["str_array"]["element_type"] == "string"
+        data = explorer.source.data
+        assert data["str_array"][0] == "alpha,beta,gamma"
+        assert data["str_array"][1] == "delta"
+
+    def test_empty_array_end_to_end(self):
+        """Empty array renders as empty string."""
+        docs = [
+            {"name": "run1", "empty_array": []},
+            {"name": "run2", "empty_array": [1, 2]},
+        ]
+        explorer = _make_mongo_explorer(docs)
+        data = explorer.source.data
+        assert data["empty_array"][0] == ""
+        assert data["empty_array"][1] == "1,2"
 
 
 class TestMongoExplorerScheduleUpdate:

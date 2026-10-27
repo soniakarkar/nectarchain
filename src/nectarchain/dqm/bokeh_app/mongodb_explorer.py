@@ -49,8 +49,10 @@ def get_collection(dburl, dbname, collname):
 def _infer_fields(collection, sample_size: int = 5000) -> dict:
     """
     Sample documents and return a dict:
-        field_name -> {"type": "numeric"|"date"|"string"|"bool", "values": [...]}
+        field_name -> {"type": "numeric"|"date"|"string"|"bool"|"array",
+                       "values": [...]}
     Skips the internal _id field.
+    Array fields additionally carry an "element_type" key.
     """
 
     docs = list(collection.find({}, {"_id": 0}).limit(sample_size))
@@ -71,6 +73,33 @@ def _infer_fields(collection, sample_size: int = 5000) -> dict:
             continue
         if not values:
             fields[name] = {"type": "string", "values": []}
+            continue
+
+        # ── Array field detection ──────────────────────────────────────
+        # A field whose every sampled value is a list is treated as an
+        # array field.  Its element type is inferred from the first
+        # element of each non-empty array (same dominant-type logic as
+        # scalar fields).
+        if all(isinstance(v, list) for v in values):
+            element_type_counts = {"numeric": 0, "date": 0, "bool": 0, "string": 0}
+            for v in values:
+                if not v:
+                    continue
+                elem = v[0]
+                if isinstance(elem, bool):
+                    element_type_counts["bool"] += 1
+                elif isinstance(elem, (int, float)):
+                    element_type_counts["numeric"] += 1
+                elif isinstance(elem, (datetime, date)):
+                    element_type_counts["date"] += 1
+                else:
+                    element_type_counts["string"] += 1
+            element_type = max(element_type_counts, key=element_type_counts.get)
+            fields[name] = {
+                "type": "array",
+                "element_type": element_type,
+                "values": values,
+            }
             continue
 
         # Determine dominant type
@@ -273,6 +302,8 @@ def _make_columns(FIELD_META) -> list[TableColumn]:
             fmt = NumberFormatter(format="0,0.##")
         elif ftype == "date":
             fmt = DateFormatter(format="%Y-%m-%d__%H:%M:%S")
+        elif ftype == "array":
+            fmt = StringFormatter()
         else:
             fmt = StringFormatter()
         cols.append(TableColumn(field=fname, title=fname, formatter=fmt))
@@ -293,6 +324,9 @@ def _format_array(values, max_display: int = 5, sig_figs: int = 6) -> str:
     - ``max_display=None`` renders the full array without a suffix
     """
     if values is None:
+        return "None"
+    if not isinstance(values, list):
+        # Non-list scalar (e.g. NaN from pandas when a field is missing)
         return "None"
     if len(values) == 0:
         return ""
@@ -376,6 +410,11 @@ def _build_query(FIELD_META, controls: dict) -> dict:
                 query[fname] = {"$eq": False}
             continue
 
+        # ── Array ────────────────────────────────────────────────────────
+        # Filtering deferred: array fields are display-only for now.
+        if ftype == "array":
+            continue
+
         # ── String / TextInput ────────────────────────────────────────────
         txt = widget.value.strip()
         if txt:
@@ -400,6 +439,7 @@ class MongoExplorer:
         self._debounce = None
         self._error = None
         self.collection = None
+        self._raw_arrays = {}
 
         try:
             self._client = MongoClient(uri)
@@ -427,6 +467,7 @@ class MongoExplorer:
             self._client = None
             self.FIELD_META = {}
             self.controls = {}
+            self._raw_arrays = {}
 
         self.source, self.status_div, self.panel = self._make_panel()
         if self._error is None:
@@ -456,6 +497,7 @@ class MongoExplorer:
         if not docs:
             self.status_div.text = "No documents match the current filters."
             self.source.data = {f: [] for f in self.FIELD_META}
+            self._raw_arrays = {}
         else:
             total = self.collection.count_documents(query)
             shown = len(df)
@@ -474,11 +516,21 @@ class MongoExplorer:
                 if fmeta["type"] == "date" and fname in df.columns:
                     df[fname] = pd.to_datetime(df[fname], errors="coerce")
 
-            self.source.data = {
-                fname: df[fname].tolist()
-                for fname in self.FIELD_META
-                if fname in df.columns
-            }
+            source_data = {}
+            self._raw_arrays = {}
+            for fname, fmeta in self.FIELD_META.items():
+                if fname not in df.columns:
+                    continue
+                if fmeta["type"] == "array":
+                    raw_values = df[fname].tolist()
+                    source_data[fname] = [
+                        _format_array(v, max_display=5, sig_figs=6) for v in raw_values
+                    ]
+                    self._raw_arrays[fname] = raw_values
+                else:
+                    source_data[fname] = df[fname].tolist()
+
+            self.source.data = source_data
 
     def _make_panel(self):
         from bokeh.models import TabPanel
