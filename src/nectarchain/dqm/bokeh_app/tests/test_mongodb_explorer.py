@@ -24,6 +24,7 @@ from nectarchain.dqm.bokeh_app.mongodb_explorer import (
     MongoExplorer,
     NumericRangeControl,
     _build_query,
+    _format_array,
     _infer_fields,
     _make_columns,
     _make_control,
@@ -306,8 +307,51 @@ class TestMakeColumns:
 
 
 # ========================================================================
-#  _build_query
+#  _format_array
 # ========================================================================
+
+
+class TestFormatArray:
+    """Tests for the ``_format_array`` helper."""
+
+    def test_none_returns_none_string(self):
+        assert _format_array(None) == "None"
+
+    def test_empty_array_returns_empty_string(self):
+        assert _format_array([]) == ""
+
+    def test_floats_scientific_notation_six_significant_figures(self):
+        # 6 significant figures: mantissa has sig_figs - 1 decimals after '.'
+        assert _format_array([1234.5]) == "1.23450e+03"
+        assert _format_array([0.0012345]) == "1.23450e-03"
+
+    def test_integers_kept_as_integers(self):
+        assert _format_array([1, 2, 3]) == "1,2,3"
+
+    def test_mixed_int_and_float(self):
+        assert _format_array([1, 2.0]) == "1,2.00000e+00"
+
+    def test_bools_render_as_strings(self):
+        assert _format_array([True, False]) == "True,False"
+
+    def test_bare_comma_join_with_suffix(self):
+        values = list(range(10))  # 10 elements
+        expected = "0,1,2,3,4,… (+5 more)"
+        assert _format_array(values) == expected
+
+    def test_no_suffix_when_within_display_limit(self):
+        values = [1.5, 2.5]
+        assert _format_array(values) == "1.50000e+00,2.50000e+00"
+
+    def test_full_array_without_suffix_when_max_display_none(self):
+        values = [1.5, 2.5, 3.5]
+        assert _format_array(values, max_display=None) == (
+            "1.50000e+00,2.50000e+00,3.50000e+00"
+        )
+
+    def test_custom_max_display(self):
+        values = [1.5, 2.5, 3.5]
+        assert _format_array(values, max_display=1) == "1.50000e+00,… (+2 more)"
 
 
 class TestBuildQuery:

@@ -279,6 +279,40 @@ def _make_columns(FIELD_META) -> list[TableColumn]:
     return cols
 
 
+def _format_array(values, max_display: int = 5, sig_figs: int = 6) -> str:
+    """
+    Format an array of numbers for compact display in the DataTable.
+
+    - ``None`` -> ``"None"``
+    - empty array -> ``""``
+    - integer elements are kept as integers; float elements are rendered in
+      scientific notation with ``sig_figs`` significant figures (default 6)
+    - elements are comma-joined; when ``max_display`` truncates the array, the
+      first ``max_display`` elements are kept and the suffix
+      ``f",… (+{n} more)"`` is appended
+    - ``max_display=None`` renders the full array without a suffix
+    """
+    if values is None:
+        return "None"
+    if len(values) == 0:
+        return ""
+    elements = list(values) if max_display is None else list(values[:max_display])
+    parts = []
+    for v in elements:
+        if isinstance(v, bool):
+            parts.append(str(v))
+        elif isinstance(v, int):
+            parts.append(str(v))
+        elif isinstance(v, float):
+            parts.append(f"{v:.{sig_figs - 1}e}")
+        else:
+            parts.append(str(v))
+    text = ",".join(parts)
+    if max_display is not None and len(values) > max_display:
+        text += f",… (+{len(values) - max_display} more)"
+    return text
+
+
 # ── Query builder ─────────────────────────────────────────────────────────────
 
 
