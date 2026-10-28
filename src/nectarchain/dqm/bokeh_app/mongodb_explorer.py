@@ -3,18 +3,20 @@
 TabPanel for a Bokeh server app — MongoDB explorer
 ====================================
 Auto-discovers fields in a MongoDB collection, builds appropriate filter
-controls for each field type, and displays matching documents in a DataTable.
+controls for each field type, and displays matching documents in a
+Panel ``Tabulator`` table.
 """
 
+import html
 import os
 from datetime import date, datetime
 
 import pandas as pd
+import panel as pn
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
 from bokeh.models import (
-    ColumnDataSource,
-    DataTable,
+    Button,
     DateFormatter,
     DatetimeRangeSlider,
     Div,
@@ -22,7 +24,6 @@ from bokeh.models import (
     Select,
     StringFormatter,
     Switch,
-    TableColumn,
     TextInput,
 )
 from pymongo import MongoClient
@@ -294,25 +295,30 @@ def _make_control(name: str, meta: dict):
     )
 
 
-def _make_columns(FIELD_META) -> list[TableColumn]:
-    cols = []
+def _make_formatters(FIELD_META) -> dict:
+    """Return Tabulator column formatters keyed by field name.
+
+    Array and string fields are pre-formatted in Python (see ``_format_array``)
+    and use Tabulator's default text rendering; numeric, date and bool columns
+    use Bokeh ``CellFormatter`` instances, which ``pn.widgets.Tabulator``
+    accepts directly in its ``formatters`` argument.
+    """
+    formatters = {}
     for fname, fmeta in FIELD_META.items():
         ftype = fmeta["type"]
         if ftype == "numeric":
-            fmt = NumberFormatter(format="0,0.##")
+            formatters[fname] = NumberFormatter(format="0,0.##")
         elif ftype == "date":
-            fmt = DateFormatter(format="%Y-%m-%d__%H:%M:%S")
-        elif ftype == "array":
-            fmt = StringFormatter()
-        else:
-            fmt = StringFormatter()
-        cols.append(TableColumn(field=fname, title=fname, formatter=fmt))
-    return cols
+            formatters[fname] = DateFormatter(format="%Y-%m-%d__%H:%M:%S")
+        elif ftype == "bool":
+            # Render as "True"/"False" text (same as the previous DataTable)
+            formatters[fname] = StringFormatter()
+    return formatters
 
 
 def _format_array(values, max_display: int = 5, sig_figs: int = 6) -> str:
     """
-    Format an array of numbers for compact display in the DataTable.
+    Format an array of numbers for compact display in the table.
 
     - ``None`` -> ``"None"``
     - empty array -> ``""``
@@ -469,7 +475,7 @@ class MongoExplorer:
             self.controls = {}
             self._raw_arrays = {}
 
-        self.source, self.status_div, self.panel = self._make_panel()
+        self.tabulator, self.status_div, self.panel = self._make_panel()
         if self._error is None:
             self._do_update()  # initial load
 
@@ -496,8 +502,9 @@ class MongoExplorer:
 
         if not docs:
             self.status_div.text = "No documents match the current filters."
-            self.source.data = {f: [] for f in self.FIELD_META}
+            self.tabulator.value = pd.DataFrame({f: [] for f in self.FIELD_META})
             self._raw_arrays = {}
+            self._modal.visible = False
         else:
             total = self.collection.count_documents(query)
             shown = len(df)
@@ -530,7 +537,8 @@ class MongoExplorer:
                 else:
                     source_data[fname] = df[fname].tolist()
 
-            self.source.data = source_data
+            self.tabulator.value = pd.DataFrame(source_data)
+            self._modal.visible = False
 
     def _make_panel(self):
         from bokeh.models import TabPanel
@@ -549,10 +557,12 @@ class MongoExplorer:
                 ),
                 sizing_mode="stretch_width",
             )
-            source = ColumnDataSource(data={})
+            tabulator = None
             status_div = Div(text="")
+            self._modal_div = None
+            self._modal = None
             panel = TabPanel(child=error_div, title=f"{self.db_name}.{self.coll_name}")
-            return source, status_div, panel
+            return tabulator, status_div, panel
 
         header = Div(
             text=f"<h2 style='margin:0'>{self.db_name}.{self.coll_name} —   "
@@ -579,23 +589,89 @@ class MongoExplorer:
             sizing_mode="stretch_width",
         )
 
-        source = ColumnDataSource(data={f: [] for f in self.FIELD_META})
-        table_cols = _make_columns(self.FIELD_META)
-        data_table = DataTable(
-            source=source,
-            columns=table_cols,
+        # ── Table: Panel Tabulator (Tabulator.js) ──────────────────────────
+        # Array fields are pre-formatted strings; numeric/date/bool columns get
+        # Bokeh CellFormatters. The first field is frozen (acts as the row key).
+        # ``editors={}`` — strictly display-only: no editors, no editing UI.
+        # The table must never allow changing values.
+        empty_df = pd.DataFrame({f: [] for f in self.FIELD_META})
+        tabulator = pn.widgets.Tabulator(
+            value=empty_df,
+            editors={},
+            formatters=_make_formatters(self.FIELD_META),
+            theme="site",
+            frozen_columns=[next(iter(self.FIELD_META), "")]
+            if len(self.FIELD_META) > 1
+            else [],
             sizing_mode="stretch_both",
         )
+        table_model = tabulator.get_root()
+
+        # ── Modal: full array contents on single-click ──────────────────────
+        # Hidden until an array cell is clicked; shows the raw (untruncated)
+        # array for that row via ``_on_cell_click``.
+        modal_div = Div(
+            text="",
+            styles={
+                "overflow-y": "auto",
+                "border": "1px solid #ccc",
+                "padding": "8px",
+                "max-height": "300px",
+                "font-family": "monospace",
+                "white-space": "pre-wrap",
+            },
+            sizing_mode="stretch_width",
+        )
+        close_button = Button(label="Close", button_type="primary")
+        close_button.on_click(self._close_modal)
+        modal = column(
+            modal_div,
+            close_button,
+            visible=False,
+            sizing_mode="stretch_width",
+        )
+        tabulator.on_click(self._on_cell_click)
 
         layout = column(
             header,
             row(
                 sidebar,
-                column(status_div, data_table, sizing_mode="stretch_both"),
+                column(status_div, table_model, modal, sizing_mode="stretch_both"),
                 sizing_mode="stretch_both",
             ),
             sizing_mode="stretch_both",
         )
 
+        # Keep references for the click handler and tests.
+        self._modal_div = modal_div
+        self._modal = modal
+
         panel = TabPanel(child=layout, title=f"{self.db_name}.{self.coll_name}")
-        return source, status_div, panel
+        return tabulator, status_div, panel
+
+    def _close_modal(self):
+        """Dismiss the array modal."""
+        self._modal.visible = False
+
+    def _on_cell_click(self, event):
+        """Open the modal showing the full raw array when an array cell is clicked.
+
+        ``event.row`` is the original DataFrame row index (Panel maps the
+        sorted/filtered view back to it).  Non-array cells and stale/missing
+        rows are no-ops.
+        """
+        if getattr(event, "column", None) is None:
+            return
+        fmeta = self.FIELD_META.get(event.column)
+        if fmeta is None or fmeta["type"] != "array":
+            return
+        row_arrays = self._raw_arrays.get(event.column)
+        if not row_arrays:
+            return
+        row = event.row
+        if not isinstance(row, int) or not (0 <= row < len(row_arrays)):
+            return
+        raw = row_arrays[row]
+        full_text = _format_array(raw, max_display=None)
+        self._modal_div.text = f"<b>{event.column}</b><br>{html.escape(full_text)}"
+        self._modal.visible = True

@@ -1,7 +1,7 @@
 """Manual test: embed MongoExplorer as one tab in a multi-tab layout.
 
 Run with:
-    bokeh serve manual_test_mongo.py --show
+    panel serve manual_test_mongo.py --show
 or from the bokeh_app directory:
     python manual_test_mongo.py
 """

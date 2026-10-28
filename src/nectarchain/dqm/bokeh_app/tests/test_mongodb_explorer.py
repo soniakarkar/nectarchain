@@ -9,7 +9,6 @@ import unittest.mock
 from datetime import datetime
 
 from bokeh.models import (
-    ColumnDataSource,
     DateFormatter,
     DatetimeRangeSlider,
     Div,
@@ -26,8 +25,8 @@ from nectarchain.dqm.bokeh_app.mongodb_explorer import (
     _build_query,
     _format_array,
     _infer_fields,
-    _make_columns,
     _make_control,
+    _make_formatters,
 )
 
 # ========================================================================
@@ -283,27 +282,33 @@ class TestMakeControl:
 
 
 # ========================================================================
-#  _make_columns
+#  _make_formatters
 # ========================================================================
 
 
-class TestMakeColumns:
-    """Tests for the ``_make_columns`` helper."""
+class TestMakeFormatters:
+    """Tests for the ``_make_formatters`` helper."""
 
-    def test_columns_use_correct_formatters(self):
+    def test_formatters_use_correct_formatters(self):
         meta = {
             "age": {"type": "numeric"},
             "ts": {"type": "date"},
             "name": {"type": "string"},
         }
-        cols = _make_columns(meta)
-        assert len(cols) == 3
-        assert isinstance(cols[0].formatter, NumberFormatter)
-        assert isinstance(cols[1].formatter, DateFormatter)
-        assert isinstance(cols[2].formatter, StringFormatter)
+        formatters = _make_formatters(meta)
+        assert set(formatters) == {"age", "ts"}
+        assert isinstance(formatters["age"], NumberFormatter)
+        assert isinstance(formatters["ts"], DateFormatter)
 
-    def test_empty_meta_returns_empty_list(self):
-        assert _make_columns({}) == []
+    def test_bool_gets_string_formatter(self):
+        meta = {"ok": {"type": "bool"}}
+        formatters = _make_formatters(meta)
+        assert isinstance(formatters["ok"], StringFormatter)
+
+    def test_array_gets_no_formatter(self):
+        """Array columns are pre-formatted strings → no formatter needed."""
+        meta = {"arr": {"type": "array"}}
+        assert _make_formatters(meta) == {}
 
 
 # ========================================================================
@@ -650,10 +655,11 @@ class TestMongoExplorerSuccessfulInit:
         explorer = _make_mongo_explorer(docs)
         assert isinstance(explorer.panel, TabPanel)
 
-    def test_source_and_status_div_are_created(self):
+    def test_tabulator_and_status_div_are_created(self):
         docs = [{"name": "Alice", "age": 30}]
         explorer = _make_mongo_explorer(docs)
-        assert isinstance(explorer.source, ColumnDataSource)
+        assert explorer.tabulator is not None
+        assert explorer.tabulator.editors == {}
         assert isinstance(explorer.status_div, Div)
 
     def test_high_cardinality_numeric_creates_range_control(self):
@@ -678,7 +684,7 @@ class TestMongoExplorerSuccessfulInit:
             {"event": "end", "ts": datetime(2024, 6, 15, 18, 30, 0)},
         ]
         explorer = _make_mongo_explorer(docs)
-        data = explorer.source.data
+        data = explorer.tabulator.value
         assert "ts" in data
         # Values should be pandas Timestamps (converted by pd.to_datetime)
         assert len(data["ts"]) == 2
@@ -705,20 +711,20 @@ class TestMongoExplorerDoUpdate:
         assert "increase max_docs" in explorer.status_div.text
         assert "100" in explorer.status_div.text
 
-    def test_populates_source_data(self):
+    def test_populates_tabulator_value(self):
         docs = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
         explorer = _make_mongo_explorer(docs)
-        data = explorer.source.data
+        data = explorer.tabulator.value
         assert "name" in data
-        assert data["name"] == ["Alice", "Bob"]
+        assert data["name"].tolist() == ["Alice", "Bob"]
         assert "age" in data
-        assert data["age"] == [30, 25]
+        assert data["age"].tolist() == [30, 25]
 
     def test_missing_fields_in_docs_filled_with_nan(self):
         """If some documents lack a field, pandas fills with NaN (float).
 
         We verify:
-        * The field is present in ``source.data``.
+        * The field is present in ``tabulator.value``.
         * The first value matches (may be cast to float by pandas).
         * The second value is NaN (not missing from the column).
         """
@@ -729,7 +735,7 @@ class TestMongoExplorerDoUpdate:
             {"name": "Bob"},  # missing 'age'
         ]
         explorer = _make_mongo_explorer(docs)
-        data = explorer.source.data
+        data = explorer.tabulator.value
         assert "age" in data
         assert data["age"][0] == 30.0  # pandas may upcast int → float
         assert math.isnan(data["age"][1])
@@ -740,7 +746,7 @@ class TestMongoExplorerDoUpdate:
             {"name": "run2", "array_field": [10.0, 20.0]},
         ]
         explorer = _make_mongo_explorer(docs)
-        data = explorer.source.data
+        data = explorer.tabulator.value
         assert "array_field" in data
         # 6 elements → first 5 + ",… (+1 more)" suffix
         assert data["array_field"][0] == (
@@ -765,7 +771,7 @@ class TestMongoExplorerDoUpdate:
             {"name": "run2"},  # missing 'array_field'
         ]
         explorer = _make_mongo_explorer(docs)
-        data = explorer.source.data
+        data = explorer.tabulator.value
         assert data["array_field"][0] == "1.00000e+00,2.00000e+00"
         assert data["array_field"][1] == "None"
 
@@ -778,7 +784,7 @@ class TestMongoExplorerDoUpdate:
         explorer = _make_mongo_explorer(docs)
         assert explorer.FIELD_META["int_array"]["type"] == "array"
         assert explorer.FIELD_META["int_array"]["element_type"] == "numeric"
-        data = explorer.source.data
+        data = explorer.tabulator.value
         assert data["int_array"][0] == "1,2,3"
         assert data["int_array"][1] == "100,200"
         assert explorer._raw_arrays["int_array"][0] == [1, 2, 3]
@@ -792,7 +798,7 @@ class TestMongoExplorerDoUpdate:
         ]
         explorer = _make_mongo_explorer(docs)
         assert explorer.FIELD_META["float_array"]["element_type"] == "numeric"
-        data = explorer.source.data
+        data = explorer.tabulator.value
         assert data["float_array"][0] == "1.23450e+03,1.23450e-03"
         assert data["float_array"][1] == "1.00000e+05"
         assert explorer._raw_arrays["float_array"][0] == [1234.5, 0.0012345]
@@ -805,7 +811,7 @@ class TestMongoExplorerDoUpdate:
         ]
         explorer = _make_mongo_explorer(docs)
         assert explorer.FIELD_META["bool_array"]["element_type"] == "bool"
-        data = explorer.source.data
+        data = explorer.tabulator.value
         assert data["bool_array"][0] == "True,False,True"
         assert data["bool_array"][1] == "False"
 
@@ -817,7 +823,7 @@ class TestMongoExplorerDoUpdate:
         ]
         explorer = _make_mongo_explorer(docs)
         assert explorer.FIELD_META["str_array"]["element_type"] == "string"
-        data = explorer.source.data
+        data = explorer.tabulator.value
         assert data["str_array"][0] == "alpha,beta,gamma"
         assert data["str_array"][1] == "delta"
 
@@ -828,9 +834,84 @@ class TestMongoExplorerDoUpdate:
             {"name": "run2", "empty_array": [1, 2]},
         ]
         explorer = _make_mongo_explorer(docs)
-        data = explorer.source.data
+        data = explorer.tabulator.value
         assert data["empty_array"][0] == ""
         assert data["empty_array"][1] == "1,2"
+
+
+class TestMongoExplorerModal:
+    """Modal behaviour: single-click on an array cell → show the full array."""
+
+    class _Click:
+        """Minimal CellClickEvent stand-in for _on_cell_click."""
+
+        def __init__(self, column, row, value=None):
+            self.column = column
+            self.row = row
+            self.value = value
+
+    def _clicked(self, explorer, column, row):
+        explorer._on_cell_click(self._Click(column, row))
+
+    def test_modal_starts_hidden(self):
+        docs = [{"name": "run1", "arr": [1.0, 2.0]}]
+        explorer = _make_mongo_explorer(docs)
+        assert explorer._modal.visible is False
+
+    def test_click_array_cell_opens_modal_with_full_array(self):
+        docs = [
+            {"name": "run1", "arr": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]},
+            {"name": "run2", "arr": [7.0, 8.0, 9.0]},
+        ]
+        explorer = _make_mongo_explorer(docs)
+        expected = _format_array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], max_display=None)
+        self._clicked(explorer, "arr", 0)
+        assert explorer._modal.visible is True
+        assert expected in explorer._modal_div.text
+        assert "arr" in explorer._modal_div.text
+
+    def test_click_non_array_cell_is_noop(self):
+        docs = [{"name": "run1", "arr": [1.0, 2.0]}]
+        explorer = _make_mongo_explorer(docs)
+        explorer._modal.visible = False
+        self._clicked(explorer, "name", 0)
+        assert explorer._modal.visible is False
+
+    def test_click_missing_array_row_is_noop(self):
+        docs = [{"name": "run1", "arr": [1.0, 2.0]}]
+        explorer = _make_mongo_explorer(docs)
+        self._clicked(explorer, "arr", 99)
+        assert explorer._modal.visible is False
+
+    def test_close_hides_modal(self):
+        docs = [{"name": "run1", "arr": [1.0, 2.0]}]
+        explorer = _make_mongo_explorer(docs)
+        explorer._on_cell_click(self._Click("arr", 0))
+        assert explorer._modal.visible is True
+        explorer._close_modal()
+        assert explorer._modal.visible is False
+
+    def test_click_different_array_cell_replaces_content_and_stays_open(self):
+        docs = [
+            {"name": "run1", "arr": [1.0, 2.0]},
+            {"name": "run2", "arr": [9.0, 9.0]},
+        ]
+        explorer = _make_mongo_explorer(docs)
+        self._clicked(explorer, "arr", 0)
+        first_text = explorer._modal_div.text
+        self._clicked(explorer, "arr", 1)
+        assert explorer._modal.visible is True
+        assert _format_array([2.0], max_display=None)[:4] in first_text
+        assert explorer._modal_div.text != first_text
+
+    def test_do_update_hides_modal(self):
+        """Refreshing the query hides a previously open modal."""
+        docs = [{"name": "run1", "arr": [1.0, 2.0]}]
+        explorer = _make_mongo_explorer(docs)
+        explorer._on_cell_click(self._Click("arr", 0))
+        assert explorer._modal.visible is True
+        explorer._do_update()
+        assert explorer._modal.visible is False
 
 
 class TestMongoExplorerScheduleUpdate:
@@ -875,13 +956,13 @@ class TestMongoExplorerScheduleUpdate:
         # Re-run the update
         explorer._do_update()
 
-        # "city" column should still exist in source.data, filled with None
-        data = explorer.source.data
+        # "city" column should still exist in tabulator.value, filled with None
+        data = explorer.tabulator.value
         assert "city" in data
-        assert data["city"] == [None]
+        assert data["city"].tolist() == [None]
         # The other columns remain intact
-        assert data["name"] == ["Bob"]
-        assert data["age"] == [25.0]
+        assert data["name"].tolist() == ["Bob"]
+        assert data["age"].tolist() == [25.0]
 
 
 class TestMongoExplorerDoUpdateGuard:
@@ -911,13 +992,14 @@ class TestMongoExplorerMakePanel:
         assert "Connection Error" in child.text
         assert "db.coll" in child.text
 
-    def test_normal_path_contains_data_table(self):
+    def test_normal_path_contains_tabulator(self):
         docs = [{"name": "Alice", "age": 30}]
         explorer = _make_mongo_explorer(docs)
         # The panel child is a column with header + sidebar + data area.
-        # At minimum, source and status_div are proper objects.
-        assert explorer.source is not None
+        # At minimum, tabulator and status_div are proper objects.
+        assert explorer.tabulator is not None
         assert explorer.status_div is not None
+        assert explorer.tabulator.editors == {}
 
     def test_tab_title_uses_db_and_collection(self):
         explorer = _make_mongo_explorer([{"a": 1}], db="mydb", coll="mycoll")

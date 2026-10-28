@@ -34,7 +34,7 @@ Congrats! You now have two VMs with ZODB/ZEO servers with ZRS replication enable
 
 The Bokeh service is launched from the second VM (the one hosting the secondary, read-only database) with:
 ```shell
-bokeh serve --num-procs $(grep -c ^processor /proc/cpuinfo) \
+panel serve --num-procs $(grep -c ^processor /proc/cpuinfo) \
             --allow-websocket-origin=<SECONDARY_HOST_IP_ADDRESS>:5006 \
             --allow-websocket-origin=<DNS_ALIAS_FOR_SECONDARY_HOST>:5006 \
             --show bokeh_app
